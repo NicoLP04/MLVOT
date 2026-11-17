@@ -12,8 +12,11 @@ from KalmanFilter import KalmanFilter
 from tracker_iou import MAX_MISSED_FRAMES, Box, Track, draw, match
 
 DT = 1.0           # one frame = one time step
+U_X = 0.0          # constant-velocity model: zero acceleration
+U_Y = 0.0
 STD_ACC = 1.0      # process noise (how much the speed can change)
-STD_MEAS = 5.0     # measurement noise in pixels
+X_STD_MEAS = 5.0   # measurement noise in pixels, independently on each axis
+Y_STD_MEAS = 5.0
 
 
 class KalmanTrack(Track):
@@ -23,7 +26,13 @@ class KalmanTrack(Track):
         super().__init__(box)
         left, top, self.width, self.height = box
         cx, cy = left + self.width / 2, top + self.height / 2
-        self.kf = KalmanFilter(DT, 0, 0, STD_ACC, STD_MEAS, STD_MEAS, cx, cy)
+        self.kf = KalmanFilter(
+            dt=DT, u_x=U_X, u_y=U_Y, std_acc=STD_ACC,
+            x_std_meas=X_STD_MEAS, y_std_meas=Y_STD_MEAS,
+        )
+        # Part II, 1.2: [x0, y0, vx0, vy0], with the detection centroid
+        # and zero initial velocity. Each track owns its independent filter.
+        self.kf.x[:, 0] = [cx, cy, 0.0, 0.0]
         self.predicted = box
 
     def predict(self) -> None:

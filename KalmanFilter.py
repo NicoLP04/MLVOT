@@ -6,13 +6,18 @@ import numpy as np
 
 
 class KalmanFilter:
+    """NumPy implementation of Part II, section 1 of the assignment.
+
+    The tracker sets the initial centroid in ``x[:2]`` when creating a track.
+    """
+
     def __init__(self, dt: float, u_x: float, u_y: float, std_acc: float,
-                 x_std_meas: float, y_std_meas: float, x0: float, y0: float) -> None:
+                 x_std_meas: float, y_std_meas: float) -> None:
         # control input (accelerations), 0 for a constant-velocity model
         self.u = np.array([[u_x], [u_y]])
 
-        # initial state: position = (x0, y0), velocity = 0
-        self.x = np.array([[x0], [y0], [0.0], [0.0]])
+        # Zero velocity; the creating track supplies its detection centroid.
+        self.x = np.zeros((4, 1))
 
         # system model: next state = A @ state + B @ u
         self.A = np.array([[1, 0, dt, 0],
