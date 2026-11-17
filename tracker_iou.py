@@ -113,7 +113,7 @@ def draw(image: np.ndarray, tracks: list[Track]) -> None:
                     cv2.FONT_HERSHEY_SIMPLEX, 0.8, color, 2)
 
 
-def main() -> None:
+def main(run=run_tracker, draw_tracks=draw, title: str = "IoU tracker") -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("det", nargs="?", default="Yolov5l")
     parser.add_argument("--show", action="store_true", help="display frames (q to quit)")
@@ -126,14 +126,14 @@ def main() -> None:
 
     video = None
     rows = []
-    for frame, tracks in run_tracker(detections, n_frames):
+    for frame, tracks in run(detections, n_frames):
         for t in tracks:
             left, top, width, height = t.box
             rows.append(f"{frame},{t.id},{left},{top},{width},{height},1,-1,-1,-1")
 
         if args.show or args.video:
             image = cv2.imread(os.path.join(SEQ_DIR, "img1", f"{frame:06d}.jpg"))
-            draw(image, tracks)
+            draw_tracks(image, tracks)
 
             if args.video:
                 if video is None:
@@ -142,7 +142,7 @@ def main() -> None:
                 video.write(image)
 
             if args.show:
-                cv2.imshow("IoU tracker", cv2.resize(image, None, fx=0.5, fy=0.5))
+                cv2.imshow(title, cv2.resize(image, None, fx=0.5, fy=0.5))
                 if cv2.waitKey(1) == ord("q"):
                     break
 
