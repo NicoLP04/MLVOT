@@ -1,0 +1,13 @@
+[project]
+name = "mlvot"
+version = "0.1.0"
+description = "Tracking vidéo multi-objets par IoU"
+requires-python = ">=3.11"
+dependencies = [
+    "numpy>=1.24,<3",
+    "opencv-python>=4.8,<6",
+    "scipy>=1.10,<2",
+]
+
+[tool.uv]
+package = false
