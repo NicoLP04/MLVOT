@@ -2,8 +2,6 @@
 
 Same as Part I, but each track has a Kalman filter that predicts where the
 object will be. The Hungarian matching uses the predicted boxes.
-
-Usage: python tracker_kalman.py [Yolov5s|Yolov5l|public-dataset] [--show] [--video out.mp4] [--out file.txt]
 """
 from typing import Iterator
 
@@ -11,7 +9,7 @@ import cv2
 import numpy as np
 
 from KalmanFilter import KalmanFilter
-from tracker_iou import MAX_MISSED_FRAMES, Box, Track, draw, main, match
+from tracker_iou import MAX_MISSED_FRAMES, Box, Track, draw, match
 
 DT = 1.0           # one frame = one time step
 STD_ACC = 1.0      # process noise (how much the speed can change)
@@ -73,7 +71,3 @@ def draw_kalman(image: np.ndarray, tracks: list[KalmanTrack]) -> None:
     for track in tracks:
         left, top, width, height = [int(v) for v in track.predicted]
         cv2.rectangle(image, (left, top), (left + width, top + height), (0, 0, 255), 1)
-
-
-if __name__ == "__main__":
-    main(run_kalman_tracker, draw_kalman, "Kalman tracker")
