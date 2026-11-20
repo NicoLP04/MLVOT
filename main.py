@@ -1,7 +1,9 @@
 """Multi-object tracker: IoU + Hungarian (Part I), optionally guided by a Kalman filter (Part II).
 
-Usage: python main.py [Yolov5s|Yolov5l|public-dataset] [--tracker iou|kalman]
-                     [--show] [--video out.mp4] [--out file.txt]
+Part IV adds an appearance-aware tracker (Kalman + appearance descriptors).
+
+Usage: python main.py [Yolov5s|Yolov5l|public-dataset] [--tracker iou|kalman|appearance]
+                     [--descriptor hist|cnn] [--show] [--video out.mp4] [--out file.txt]
 """
 import argparse
 import os
@@ -11,6 +13,7 @@ import cv2
 import numpy as np
 from scipy.optimize import linear_sum_assignment
 
+from Appearance import get_features
 from KalmanFilter import KalmanFilter
 
 Box = tuple[float, float, float, float]  # (left, top, width, height)
@@ -26,6 +29,17 @@ U_Y = 0.0
 STD_ACC = 1.0      # process noise (how much the speed can change)
 X_STD_MEAS = 5.0   # measurement noise in pixels, independently on each axis
 Y_STD_MEAS = 5.0
+
+# Part IV (appearance-aware tracker): similarity S = ALPHA * IoU + BETA * cosine(appearance)
+# Values tuned for YOLO26x detections + ReID descriptor (HOTA 49.34). They are worse than
+# beta=0.5, threshold=0.3, memory=30 on the provided detections (Yolov5s/l, public-dataset).
+APP_ALPHA = 0.75
+APP_BETA = 0.25
+APP_THRESHOLD = 0.15   # minimum S to accept a match
+APP_MAX_MISSED = 60    # lost tracks are kept longer: appearance helps to find them again
+APP_EMA = 0.8          # track descriptor = EMA * old descriptor + (1 - EMA) * new one
+APP_STD_ACC = 0.25     # Kalman noise used by this tracker
+APP_STD_MEAS = 10.0
 
 
 # ---------------------------------------------------------------- detections
@@ -87,6 +101,19 @@ class KalmanTrack(Track):
         self.box = box
 
 
+class AppearanceTrack(KalmanTrack):
+    """Part IV: a Kalman track that also remembers what the person looks like."""
+
+    def __init__(self, box: Box, feature: np.ndarray) -> None:
+        super().__init__(box)
+        self.feature = feature
+
+    def update(self, box: Box, feature: np.ndarray) -> None:
+        super().update(box)
+        mixed = APP_EMA * self.feature + (1 - APP_EMA) * feature
+        self.feature = mixed / max(np.linalg.norm(mixed), 1e-9)
+
+
 # ------------------------------------------------------------------ tracking
 
 def iou(a: Box, b: Box) -> float:
@@ -102,9 +129,9 @@ def iou(a: Box, b: Box) -> float:
 
 
 def match(
-    tracks: list[Track], boxes: list[Box]
+    tracks: list[Track], boxes: list[Box], features: np.ndarray | None = None
 ) -> tuple[list[tuple[int, int]], list[int], list[int]]:
-    """Hungarian matching on IoU.
+    """Hungarian matching on IoU (or on IoU + appearance if `features` is given).
 
     Returns (matches, unmatched_tracks, unmatched_detections),
     matches being a list of (track_index, detection_index).
@@ -118,11 +145,18 @@ def match(
         for j, box in enumerate(boxes):
             similarity[i, j] = iou(track.box, box)
 
+    threshold = IOU_THRESHOLD
+    if features is not None:
+        # Part IV: S = alpha * IoU + beta * appearance similarity (cosine, clipped to [0, 1])
+        appearance = np.array([t.feature for t in tracks]) @ features.T
+        similarity = APP_ALPHA * similarity + APP_BETA * np.clip(appearance, 0, 1)
+        threshold = APP_THRESHOLD
+
     rows, cols = linear_sum_assignment(similarity, maximize=True)
 
     matches = []
     for i, j in zip(rows, cols):
-        if similarity[i, j] >= IOU_THRESHOLD:
+        if similarity[i, j] >= threshold:
             matches.append((i, j))
 
     matched_tracks = [i for i, _ in matches]
@@ -133,29 +167,64 @@ def match(
 
 
 def run_tracker(
-    detections: dict[int, list[Box]], n_frames: int, use_kalman: bool
+    detections: dict[int, list[Box]], n_frames: int, use_kalman: bool,
+    features: dict[int, np.ndarray] | None = None,
 ) -> Iterator[tuple[int, list[Track]]]:
-    """For each frame, yield (frame, tracks seen in that frame)."""
-    new_track = KalmanTrack if use_kalman else Track
+    """For each frame, yield (frame, tracks seen in that frame).
+
+    If `features` (appearance descriptors of the detections) is given, the Part IV
+    appearance-aware tracker is used (it implies Kalman).
+    """
+    use_appearance = features is not None
+    max_missed = APP_MAX_MISSED if use_appearance else MAX_MISSED_FRAMES
     tracks = []
     for frame in range(1, n_frames + 1):
         boxes = detections.get(frame, [])
+        frame_features = features.get(frame) if use_appearance else None
 
         for track in tracks:
             track.predict()
-        matches, unmatched_tracks, unmatched_dets = match(tracks, boxes)
+        matches, unmatched_tracks, unmatched_dets = match(tracks, boxes, frame_features)
 
         for i, j in matches:
-            tracks[i].update(boxes[j])
+            if use_appearance:
+                tracks[i].update(boxes[j], frame_features[j])
+            else:
+                tracks[i].update(boxes[j])
             tracks[i].missed = 0
         for i in unmatched_tracks:
             tracks[i].missed += 1   # no update: with Kalman we keep the predicted state
         for j in unmatched_dets:
-            tracks.append(new_track(boxes[j]))
+            if use_appearance:
+                tracks.append(AppearanceTrack(boxes[j], frame_features[j]))
+            elif use_kalman:
+                tracks.append(KalmanTrack(boxes[j]))
+            else:
+                tracks.append(Track(boxes[j]))
 
         yield frame, [t for t in tracks if t.missed == 0]
 
-        tracks = [t for t in tracks if t.missed <= MAX_MISSED_FRAMES]
+        tracks = [t for t in tracks if t.missed <= max_missed]
+
+
+def interpolate(rows: list[tuple[int, int, Box]]) -> list[tuple[int, int, Box]]:
+    """Part IV post-processing: fill the frames where a track was not seen (hidden person).
+
+    rows = (frame, track_id, box). Between two appearances of the same track, the
+    missing boxes are interpolated linearly. Offline: it needs the box after the gap.
+    """
+    last_seen = {}   # track id -> (frame, box)
+    filled = []
+    for frame, track_id, box in sorted(rows, key=lambda r: (r[1], r[0])):
+        if track_id in last_seen:
+            prev_frame, prev_box = last_seen[track_id]
+            gap = frame - prev_frame
+            for k in range(1, gap):
+                t = k / gap
+                new_box = tuple(a + t * (b - a) for a, b in zip(prev_box, box))
+                filled.append((prev_frame + k, track_id, new_box))
+        last_seen[track_id] = (frame, box)
+    return sorted(rows + filled)
 
 
 # ------------------------------------------------------------- visualization
@@ -181,25 +250,33 @@ def draw_predictions(image: np.ndarray, tracks: list[KalmanTrack]) -> None:
 # ---------------------------------------------------------------------- main
 
 def main() -> None:
+    global STD_ACC, X_STD_MEAS, Y_STD_MEAS
     parser = argparse.ArgumentParser()
-    parser.add_argument("--tracker", choices=("iou", "kalman"), default="iou",
-                        help="tracking method: iou or iou with Kalman prediction")
+    parser.add_argument("--tracker", choices=("iou", "kalman", "appearance"), default="iou",
+                        help="iou, iou with Kalman prediction, or Kalman + appearance (Part IV)")
+    parser.add_argument("--descriptor", choices=("hist", "cnn", "reid"), default="reid",
+                        help="appearance descriptor, only used with --tracker appearance")
     parser.add_argument("det", nargs="?", default="Yolov5l")
     parser.add_argument("--show", action="store_true", help="display frames (q to quit)")
     parser.add_argument("--video", help="save the tracking video to this file")
     parser.add_argument("--out", default="ADL-Rundle-6.txt")
+    parser.add_argument("--interpolate", action="store_true",
+                        help="fill the frames where a track was hidden (Part IV, not drawn in the video)")
     args = parser.parse_args()
-    use_kalman = args.tracker == "kalman"
+    use_kalman = args.tracker != "iou"
 
     detections = load_detections(os.path.join(SEQ_DIR, "det", args.det, "det.txt"))
     n_frames = max(detections)
+    features = None
+    if args.tracker == "appearance":
+        STD_ACC, X_STD_MEAS, Y_STD_MEAS = APP_STD_ACC, APP_STD_MEAS, APP_STD_MEAS
+        features = get_features(args.det, args.descriptor, detections)
 
     video = None
     rows = []
-    for frame, tracks in run_tracker(detections, n_frames, use_kalman):
+    for frame, tracks in run_tracker(detections, n_frames, use_kalman, features):
         for t in tracks:
-            left, top, width, height = t.box
-            rows.append(f"{frame},{t.id},{left},{top},{width},{height},1,-1,-1,-1")
+            rows.append((frame, t.id, t.box))
 
         if args.show or args.video:
             image = cv2.imread(os.path.join(SEQ_DIR, "img1", f"{frame:06d}.jpg"))
@@ -220,8 +297,11 @@ def main() -> None:
 
     if video:
         video.release()
+    if args.interpolate:
+        rows = interpolate(rows)
     with open(args.out, "w") as f:
-        f.write("\n".join(rows) + "\n")
+        for frame, track_id, (left, top, width, height) in rows:
+            f.write(f"{frame},{track_id},{left},{top},{width},{height},1,-1,-1,-1\n")
     print(f"{len(rows)} rows written to {args.out}")
 
 

@@ -20,7 +20,7 @@ ROOT = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(ROOT, "TrackEval"))
 import trackeval  # noqa: E402
 
-from main import SEQ_DIR, Track, load_detections, run_tracker  # noqa: E402
+from main import SEQ_DIR, Track, interpolate, load_detections, run_tracker  # noqa: E402
 
 SEQ = "ADL-Rundle-6"
 DETECTORS = ["Yolov5s", "Yolov5l", "public-dataset"]
@@ -29,7 +29,8 @@ TIMING_REPEATS = 3                          # FPS = best of 3 runs, to reduce no
 RESULTS_DIR = os.path.join(ROOT, "results")
 
 
-def run_and_save(detector: str, tracker: str, use_kalman: bool) -> float:
+def run_and_save(detector: str, tracker: str, use_kalman: bool, features=None,
+                 fill_gaps: bool = False) -> float:
     """Run a tracker, save its MOT file for TrackEval, return its speed in FPS.
 
     Only the tracking is timed (no image reading, no drawing).
@@ -41,22 +42,24 @@ def run_and_save(detector: str, tracker: str, use_kalman: bool) -> float:
     for _ in range(TIMING_REPEATS):
         Track.next_id = 1   # same IDs at every run
         start = time.perf_counter()
-        for _ in run_tracker(detections, n_frames, use_kalman):
+        for _ in run_tracker(detections, n_frames, use_kalman, features):
             pass
         best_time = min(best_time, time.perf_counter() - start)
 
     # Format the rows during the run: the tracks are mutated from one frame to the next
     Track.next_id = 1
     rows = []
-    for frame, tracks in run_tracker(detections, n_frames, use_kalman):
+    for frame, tracks in run_tracker(detections, n_frames, use_kalman, features):
         for t in tracks:
-            left, top, width, height = t.box
-            rows.append(f"{frame},{t.id},{left},{top},{width},{height},1,-1,-1,-1")
+            rows.append((frame, t.id, t.box))
+    if fill_gaps:
+        rows = interpolate(rows)
 
     folder = os.path.join(RESULTS_DIR, "trackers", f"{tracker}_{detector}", "data")
     os.makedirs(folder, exist_ok=True)
     with open(os.path.join(folder, f"{SEQ}.txt"), "w") as f:
-        f.write("\n".join(rows) + "\n")
+        for frame, track_id, (left, top, width, height) in rows:
+            f.write(f"{frame},{track_id},{left},{top},{width},{height},1,-1,-1,-1\n")
     return n_frames / best_time
 
 
@@ -99,16 +102,18 @@ def main() -> None:
 
     output = evaluate(list(fps))
 
-    lines = ["| Detections | Tracker | HOTA | IDF1 | IDSW | FPS |",
-             "|---|---|---|---|---|---|"]
+    lines = ["| Detections | Tracker | HOTA | DetA | AssA | IDF1 | IDSW | FPS |",
+             "|---|---|---|---|---|---|---|---|"]
     for detector in DETECTORS:
         for tracker in TRACKERS:
             name = f"{tracker}_{detector}"
             res = output[name]["COMBINED_SEQ"]["pedestrian"]
             hota = 100 * np.mean(res["HOTA"]["HOTA"])   # mean over the alpha thresholds
+            deta = 100 * np.mean(res["HOTA"]["DetA"])   # detection quality
+            assa = 100 * np.mean(res["HOTA"]["AssA"])   # association (identity) quality
             idf1 = 100 * res["Identity"]["IDF1"]
             idsw = res["CLEAR"]["IDSW"]
-            lines.append(f"| {detector} | {tracker} | {hota:.2f} | {idf1:.2f} | {idsw} | {fps[name]:.0f} |")
+            lines.append(f"| {detector} | {tracker} | {hota:.2f} | {deta:.2f} | {assa:.2f} | {idf1:.2f} | {idsw} | {fps[name]:.0f} |")
 
     table = "\n".join(lines)
     print(table)

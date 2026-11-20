@@ -5,9 +5,21 @@ description = "Tracking vidéo multi-objets par IoU"
 requires-python = ">=3.11"
 dependencies = [
     "numpy>=1.24,<3",
+    "onnxruntime>=1.32.0",
     "opencv-python>=4.8,<6",
     "scipy>=1.10,<2",
+    "torch>=2.15.0",
+    "torchvision>=0.29.2",
+    "ultralytics>=8.4.216",
 ]
 
 [tool.uv]
 package = false
+
+[tool.uv.sources]
+torch = { index = "pytorch-cpu" }
+torchvision = { index = "pytorch-cpu" }
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"

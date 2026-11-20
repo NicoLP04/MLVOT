@@ -14,3 +14,7 @@ results/
 
 # Clone externe de TrackEval (voir README)
 TrackEval/
+
+# Poids des détecteurs (téléchargés par ultralytics)
+*.pt
+*.onnx
