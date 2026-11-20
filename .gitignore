@@ -11,3 +11,6 @@ __pycache__/
 results/
 /ADL-Rundle-6.txt
 *.mp4
+
+# Clone externe de TrackEval (voir README)
+TrackEval/

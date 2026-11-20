@@ -50,6 +50,18 @@ uv run --env-file .env main.py public-dataset --out ADL-Rundle-6.txt
 s'exécuter sans fenêtre. Les données sont lues dans `ADL-Rundle-6/` à côté du script.
 Les dossiers parents des chemins `--out` et `--video` doivent déjà exister.
 
+## Évaluation (Partie III)
+
+TrackEval n'est pas versionné ; le cloner à la racine du dépôt :
+
+```bash
+git clone https://github.com/JonathonLuiten/TrackEval.git
+uv run evaluate.py   # HOTA, IDF1, IDSW, FPS des deux trackers -> results/results.md
+uv run tune.py       # recherche d'hyperparamètres -> results/tuning.md (plusieurs minutes)
+```
+
+Les images de comparaison IoU / Kalman sont dans `figures/`.
+
 ## PyCharm
 
 Utiliser `.venv/bin/python` comme interpréteur du projet et `main.py`
@@ -63,6 +75,7 @@ le même environnement.
 
 - `main.py` : le tracker (IoU + hongrois, option Kalman), les arguments, l'affichage et les exports.
 - `KalmanFilter.py` : modèle mathématique du filtre de Kalman.
+- `evaluate.py`, `tune.py` : évaluation avec TrackEval et recherche d'hyperparamètres.
 
 Le filtre est implémenté localement avec NumPy, conformément à la partie II
 du sujet (§ 1), puis importé par le tracker comme demandé au § 2.1.
