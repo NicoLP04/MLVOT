@@ -61,10 +61,7 @@ le même environnement.
 
 ## Organisation du code
 
-- `main.py` : point d’entrée, arguments, lecture des détections, affichage et exports.
-- `tracker_iou.py` : suivi IOU, association hongroise et dessin des pistes.
-- `tracker_kalman.py` : suivi avec prédiction Kalman et dessin des prédictions ;
-  réutilise les primitives IOU pour l’association.
+- `main.py` : le tracker (IoU + hongrois, option Kalman), les arguments, l'affichage et les exports.
 - `KalmanFilter.py` : modèle mathématique du filtre de Kalman.
 
 Le filtre est implémenté localement avec NumPy, conformément à la partie II
@@ -72,6 +69,6 @@ du sujet (§ 1), puis importé par le tracker comme demandé au § 2.1.
 Son constructeur reçoit les six paramètres `dt`, `u_x`, `u_y`, `std_acc`,
 `x_std_meas`, `y_std_meas`. Chaque piste initialise ensuite son propre état
 `[cx, cy, 0, 0]` à partir du centroïde de sa détection. Les six paramètres
-sont explicités en tête de `tracker_kalman.py` ; leurs valeurs numériques
+sont explicités en tête de `main.py` ; leurs valeurs numériques
 (hors accélération et vitesse initiale nulles) sont des choix du projet,
 car le sujet n’en impose pas.
